@@ -4,7 +4,7 @@ import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import { createCanvas, DOMMatrix, ImageData, Path2D } from "@napi-rs/canvas";
 import PDFDocument from "pdfkit";
 
-// Compatibilité PDF.js / Node.js
+// PDF.js / Node.js compatibility
 globalThis.DOMMatrix ??= DOMMatrix;
 globalThis.ImageData ??= ImageData;
 globalThis.Path2D ??= Path2D;
@@ -12,7 +12,7 @@ globalThis.Path2D ??= Path2D;
 const SCALE = 2.5; // Résolution du PDF final
 const BLACK = "#000000";
 
-// Normalisation : ignore les accents et la casse
+// Normalisation: ignores diacritics and case
 function normalize(value) {
   return value
       .normalize("NFD")
@@ -24,14 +24,14 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Vérifie si un élément contient un des termes recherchés
+// Checks whether an element contains any of the search terms
 function containsTarget(text, targets) {
   const normalized = normalize(text);
 
   return targets.some(target => {
     const escaped = escapeRegex(target);
 
-    // Frontières de mots : évite de trouver "Jean" dans "Jeanne"
+    // Word boundaries: prevents ‘Jean’ from being found in ‘Jeanne’
     const regex = new RegExp(
         `(^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`,
         "u"
@@ -43,20 +43,20 @@ function containsTarget(text, targets) {
 
 async function redactPDF(inputFile, outputFile, words) {
   if (!fs.existsSync(inputFile)) {
-    throw new Error(`Fichier introuvable : ${inputFile}`);
+    throw new Error(`File not found: ${inputFile}`);
   }
 
   if (path.resolve(inputFile) === path.resolve(outputFile)) {
-    throw new Error("Le fichier source et le fichier de sortie doivent être différents.");
+    throw new Error("The source file and the output file must be different.");
   }
 
   const targets = words.map(normalize).filter(Boolean);
 
   if (targets.length === 0) {
-    throw new Error("Aucun mot à rechercher.");
+    throw new Error("No words to search for.");
   }
 
-  console.log("Chargement du PDF...");
+  console.log("Loading the PDF... ");
 
   const data = new Uint8Array(fs.readFileSync(inputFile));
 
@@ -69,15 +69,15 @@ async function redactPDF(inputFile, outputFile, words) {
 
   const pdf = await loadingTask.promise;
 
-  console.log(`Nombre de pages : ${pdf.numPages}`);
-  console.log(`Termes recherchés : ${words.join(", ")}`);
+  console.log(`Number of pages: ${pdf.numPages}`);
+  console.log(`Search terms: ${words.join(", ")}`);
 
-  // Nouveau PDF, sans aucune donnée textuelle d'origine
+  // New PDF, with no original text data
   const output = new PDFDocument({
     autoFirstPage: false,
     compress: true,
     info: {
-      Title: "Document anonymisé",
+      Title: "Anonymized Document",
       Author: "Local PDF anonymizer"
     }
   });
@@ -88,7 +88,7 @@ async function redactPDF(inputFile, outputFile, words) {
   let totalRedactions = 0;
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-    console.log(`Traitement de la page ${pageNumber}/${pdf.numPages}...`);
+    console.log(`Processing page ${pageNumber}/${pdf.numPages}...`);
 
     const page = await pdf.getPage(pageNumber);
     const viewport = page.getViewport({ scale: SCALE });
@@ -99,17 +99,17 @@ async function redactPDF(inputFile, outputFile, words) {
     const canvas = createCanvas(width, height);
     const context = canvas.getContext("2d");
 
-    // Fond blanc
+    // White background
     context.fillStyle = "#FFFFFF";
     context.fillRect(0, 0, width, height);
 
-    // Rendu de la page
+    // Render the page
     await page.render({
       canvasContext: context,
       viewport
     }).promise;
 
-    // Extraction du texte et de ses positions
+    // Extract text and its positions
     const textContent = await page.getTextContent();
 
     let pageRedactions = 0;
@@ -119,7 +119,7 @@ async function redactPDF(inputFile, outputFile, words) {
 
       if (!containsTarget(item.str, targets)) continue;
 
-      // Conversion des coordonnées PDF vers les coordonnées canvas
+      // Convert PDF coordinates to canvas coordinates
       const transform = pdfjsLib.Util.transform(
           viewport.transform,
           item.transform
@@ -130,7 +130,7 @@ async function redactPDF(inputFile, outputFile, words) {
       const fontHeight = Math.hypot(transform[2], transform[3]);
       const itemWidth = item.width * SCALE;
 
-      // Marge de sécurité autour du texte
+      // Safety margin around the text
       const margin = Math.max(2, fontHeight * 0.12);
 
       const rectX = x - margin;
@@ -138,7 +138,7 @@ async function redactPDF(inputFile, outputFile, words) {
       const rectWidth = itemWidth + margin * 2;
       const rectHeight = fontHeight + margin * 2;
 
-      // Caviardage réel sur l'image
+      // Actual redaction on the image
       context.fillStyle = BLACK;
       context.fillRect(
           rectX,
@@ -151,12 +151,12 @@ async function redactPDF(inputFile, outputFile, words) {
       totalRedactions++;
     }
 
-    console.log(`  ${pageRedactions} élément(s) caviardé(s)`);
+    console.log(`  ${pageRedactions} redacted item(s)`);
 
-    // Conversion en image PNG
+    // Convert to PNG image
     const imageBuffer = canvas.toBuffer("image/png");
 
-    // Ajout de la page sous forme d'image uniquement
+    // Add the page as an image only
     output.addPage({
       size: [width, height],
       margin: 0
@@ -177,27 +177,31 @@ async function redactPDF(inputFile, outputFile, words) {
     outputStream.on("error", reject);
   });
 
-  await loadingTask.destroy();
+  if (typeof loadingTask.destroy === "function") {
+    await loadingTask.destroy();
+  } else {
+    pdf.destroy();
+  }
 
-  console.log("\nTerminé !");
-  console.log(`Éléments caviardés : ${totalRedactions}`);
-  console.log(`Fichier créé : ${outputFile}`);
+  console.log("\nThe end !");
+  console.log(`Redacted words : ${totalRedactions}`);
+  console.log(`Created file : ${outputFile}`);
 }
 
 const [, , inputFile, outputFile, ...words] = process.argv;
 
 if (!inputFile || !outputFile || words.length === 0) {
   console.log(`
-Utilisation :
+Usage:
 
-node redact.mjs entree.pdf sortie.pdf "Jean" "Dupont" "75000"
+node redact.mjs input.pdf output.pdf “Jean” ‘Dupont’ “75000”
 
-Les termes sont recherchés sans distinction de casse ni d'accent.
+Terms are searched for without regard to case or accents.
   `);
   process.exit(1);
 }
 
 redactPDF(inputFile, outputFile, words).catch(error => {
-  console.error("Erreur :", error);
+  console.error("Error :", error);
   process.exit(1);
 });
